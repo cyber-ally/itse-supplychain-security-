@@ -1,0 +1,80 @@
+name: ITSE Supply Chain Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  build-sign-push:
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_TAG: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPO }}:${{ github.sha }}
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Install Syft
+      run: |
+        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+        | sh -s -- -b /usr/local/bin
+
+    - name: Install Trivy
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg apt-transport-https
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | gpg --dearmor \
+          | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb stable main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install -y trivy
+
+    - name: Install Cosign
+      run: |
+        curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 \
+          -o /usr/local/bin/cosign
+        chmod +x /usr/local/bin/cosign
+
+    - name: Generate SBOM
+      run: syft app/ -o spdx-json > sbom.json
+
+    - name: Build Docker image
+      run: docker build -t $IMAGE_TAG ./app
+
+    - name: Trivy Vulnerability Scan
+      run: |
+        trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_TAG
+
+    - name: Push Image to ECR
+      run: docker push $IMAGE_TAG
+
+    - name: Import Cosign private key
+      run: |
+        echo "${{ secrets.COSIGN_KEY }}" > cosign.key
+        chmod 600 cosign.key
+
+    - name: Sign Image with Cosign
+      run: |
+        cosign sign --key cosign.key $IMAGE_TAG --yes
+
+    - name: Attest SBOM
+      run: |
+        cosign attest --key cosign.key --predicate sbom.json --type spdx $IMAGE_TAG --yes
+
+    - name: Verify Signature
+      run: |
+        cosign verify --key cosign.pub $IMAGE_TAG
