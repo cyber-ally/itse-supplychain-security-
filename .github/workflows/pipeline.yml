@@ -115,23 +115,21 @@ jobs:
         cosign attest generate \
           --predicate sbom.json \
           --type spdx \
+          --output-file sbom.att.json \
           --key cosign.key \
           --yes \
-          --output-file sbom.att.json \
           $DIGEST
         echo "Generated attestation envelope:"
         head -n 20 sbom.att.json
 
-    # -------------------------
-    # Attach Attestation to Image
-    # -------------------------
     - name: Attach SBOM Attestation
       run: |
         cosign attach attestation \
-          --key cosign.key \
           --attestation sbom.att.json \
+          --key cosign.key \
           --yes \
           $DIGEST
+
 
     # -------------------------
     # Verify Final Signature
