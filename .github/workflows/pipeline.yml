@@ -42,7 +42,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y trivy
 
-
     - name: Install Cosign
       run: |
         curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 \
@@ -59,22 +58,32 @@ jobs:
       run: |
         trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_TAG
 
-    - name: Push Image to ECR
-      run: docker push $IMAGE_TAG
+    - name: Push Image to ECR and capture digest
+      id: push-image
+      run: |
+        docker push $IMAGE_TAG
+        DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE_TAG)
+        echo "DIGEST=$DIGEST" >> $GITHUB_ENV
+        echo "Image pushed with digest: $DIGEST"
 
     - name: Import Cosign private key
       run: |
         echo "${{ secrets.COSIGN_KEY }}" > cosign.key
         chmod 600 cosign.key
 
-    - name: Sign Image with Cosign
+    - name: Sign Image with Cosign (using digest)
       run: |
-        cosign sign --key cosign.key $IMAGE_TAG --yes
+        cosign sign --key cosign.key $DIGEST --yes
 
-    - name: Attest SBOM
+    - name: Attest SBOM (using digest)
       run: |
-        cosign attest --key cosign.key --predicate sbom.json --type spdx $IMAGE_TAG --yes
+        cosign attest \
+          --key cosign.key \
+          --predicate sbom.json \
+          --type spdx \
+          $DIGEST \
+          --yes
 
-    - name: Verify Signature
+    - name: Verify Signature (using digest)
       run: |
-        cosign verify --key cosign.pub $IMAGE_TAG
+        cosign verify --key cosign.pub $DIGEST
