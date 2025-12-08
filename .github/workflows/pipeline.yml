@@ -75,6 +75,14 @@ jobs:
         echo "SBOM generated:"
         head -n 20 sbom.json
 
+    - name: Wrap SBOM for Cosign Attestation
+      run: |
+        echo "{\"predicateType\":\"https://spdx.dev/Document\",\"predicate\":$(cat sbom.json)}" > sbom.att.json
+        mv sbom.att.json sbom.json
+        echo "Final SBOM predicate:"
+        head -n 20 sbom.json
+
+
     # --------------------------------------------------
     # 7. Build Docker Image
     # --------------------------------------------------
@@ -120,11 +128,11 @@ jobs:
     - name: Attest SBOM (with key)
       run: |
         cosign attest \
-          --predicate sbom.json \
-          --type spdx \
-          --key cosign.key \
-          --yes \
-          $DIGEST
+        --predicate sbom.json \
+        --type https://spdx.dev/Document \
+        --key cosign.key \
+        --yes \
+        $DIGEST
 
     # --------------------------------------------------
     # 13. Verify Signature
