@@ -103,23 +103,22 @@ jobs:
     # -------------------------
     # SIGN the Image
     # -------------------------
-    - name: Sign Image with Cosign (using digest)
+    - name: Sign Image
       run: cosign sign --key cosign.key --yes ${{ env.DIGEST }}
-
 
     # -------------------------
     # COSIGN v2 FIXED SYNTAX — Attestation
     # IMAGE_DIGEST MUST COME FIRST
     # -------------------------
-    - name: Generate SBOM Attestation Envelope
-      run: cosign attest generate ${{ env.DIGEST }} --predicate sbom.json --type spdx --output-file sbom.att.json --key cosign.key --yes
-
+    - name: Generate SBOM Attestation
+      run: cosign attest --type spdxjson --predicate sbom.json --key cosign.key --yes ${{ env.DIGEST }}
 
     # -------------------------
     # Attach Attestation
     # -------------------------
-    - name: Attach SBOM Attestation
-      run: cosign attach attestation ${{ env.DIGEST }} --attestation sbom.att.json --key cosign.key --yes
+    - name: Verify SBOM Attestation
+      run: cosign verify-attestation --type https://spdx.dev/Document ${{ env.DIGEST }}
+
 
     # -------------------------
     # VERIFY SIGNATURE
