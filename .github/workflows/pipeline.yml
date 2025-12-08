@@ -13,6 +13,7 @@ jobs:
       IMAGE_TAG: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPO }}:${{ github.sha }}
 
     steps:
+
     - name: Checkout source code
       uses: actions/checkout@v3
 
@@ -26,12 +27,18 @@ jobs:
     - name: Login to Amazon ECR
       uses: aws-actions/amazon-ecr-login@v2
 
+    # -------------------------
+    # Install Syft
+    # -------------------------
     - name: Install Syft
       run: |
         curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
           | sh -s -- -b /usr/local/bin
         syft version
 
+    # -------------------------
+    # Install Trivy
+    # -------------------------
     - name: Install Trivy
       run: |
         sudo apt-get update
@@ -43,6 +50,9 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y trivy
 
+    # -------------------------
+    # Install Cosign
+    # -------------------------
     - name: Install Cosign
       run: |
         curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 \
@@ -50,56 +60,87 @@ jobs:
         chmod +x /usr/local/bin/cosign
         cosign version
 
-    - name: Generate SBOM (SPDX JSON)
+    # -------------------------
+    # Generate SBOM
+    # -------------------------
+    - name: Generate SBOM
       run: |
         syft app/ -o spdx-json=sbom.json
-        echo "Generated SBOM:"
         head -n 20 sbom.json
 
+    # -------------------------
+    # Build Docker Image
+    # -------------------------
     - name: Build Docker image
       run: docker build -t $IMAGE_TAG ./app
 
+    # -------------------------
+    # Scan Image With Trivy
+    # -------------------------
     - name: Trivy Vulnerability Scan
       run: |
         trivy image --exit-code 1 --severity HIGH,CRITICAL $IMAGE_TAG
 
+    # -------------------------
+    # Push Image + Capture Digest
+    # -------------------------
     - name: Push Image to ECR and capture digest
       id: push-image
       run: |
         docker push $IMAGE_TAG
         DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE_TAG)
         echo "DIGEST=$DIGEST" >> $GITHUB_ENV
-        echo "Image pushed with digest: $DIGEST"
+        echo "Image Digest: $DIGEST"
 
+    # -------------------------
+    # Import Cosign Key
+    # -------------------------
     - name: Import Cosign private key
       run: |
         echo "${{ secrets.COSIGN_KEY }}" > cosign.key
         chmod 600 cosign.key
 
-    - name: Sign Image with Cosign (using digest)
+    # -------------------------
+    # SIGN the Image
+    # -------------------------
+    - name: Sign Image with Cosign
       run: |
-        cosign sign --key cosign.key ${{ env.DIGEST }} --yes
+        cosign sign \
+          --key cosign.key \
+          --yes \
+          ${{ env.DIGEST }}
 
+    # -------------------------
+    # COSIGN v2 FIXED SYNTAX — Attestation
+    # IMAGE_DIGEST MUST COME FIRST
+    # -------------------------
     - name: Generate SBOM Attestation Envelope
       run: |
         cosign attest generate \
+          ${{ env.DIGEST }} \
           --predicate sbom.json \
           --type spdx \
           --output-file sbom.att.json \
           --key cosign.key \
-          --yes \
-          ${{ env.DIGEST }}
-        echo "Generated attestation envelope:"
+          --yes
         head -n 20 sbom.att.json
 
+    # -------------------------
+    # Attach Attestation
+    # -------------------------
     - name: Attach SBOM Attestation
       run: |
         cosign attach attestation \
+          ${{ env.DIGEST }} \
           --attestation sbom.att.json \
           --key cosign.key \
-          --yes \
-          ${{ env.DIGEST }}
+          --yes
 
-    - name: Verify Signature (using digest)
+    # -------------------------
+    # VERIFY SIGNATURE
+    # -------------------------
+    - name: Verify Signature
       run: |
-        cosign verify --key cosign.pub ${{ env.DIGEST }}
+        cosign verify \
+          --key cosign.pub \
+          ${{ env.DIGEST }}
