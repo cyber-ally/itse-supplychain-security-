@@ -48,14 +48,15 @@ jobs:
           -o /usr/local/bin/cosign
         chmod +x /usr/local/bin/cosign
 
-    - name: Generate SBOM (raw)
-      run: syft app/ -o spdx-json > sbom.raw.json
-
-    - name: Wrap SBOM into in-toto predicate
+    # --- FIXED SBOM GENERATION (VALID IN-TOTO PREDICATE) ---
+    - name: Generate in-toto SBOM predicate
       run: |
-        echo "{\"predicateType\":\"https://spdx.dev/Document\",\"predicate\":$(cat sbom.raw.json)}" > sbom.json
-        echo "SBOM predicate created:"
-        head -c 500 sbom.json
+        syft app/ \
+          -o spdx-json \
+          --file sbom.json \
+          --attest
+        echo "SBOM created:"
+        head -n 20 sbom.json
 
     - name: Build Docker image
       run: docker build -t $IMAGE_TAG ./app
